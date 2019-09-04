@@ -1,9 +1,0 @@
-#cloud-config
-package_update: true
-packages:
-  - docker
-runcmd:
-  - sudo ip addr add x.x.x.x dev eth0
-  - systemctl enable docker
-  - systemctl start docker
-  - sudo docker run -d --privileged --restart=unless-stopped --net=host -v /etc/kubernetes:/etc/kubernetes -v /var/run:/var/run rancher/rancher-agent:v2.2.8 --server https://94.130.177.131 --token zg9pqlsdlgc22h5b7jwngdj5ztrwv6ftmwbnffqq86kcbq7bpc95dw --ca-checksum e220b55d759d8350eeab749ec642298a4014fb7a4b60f78c90763a3f704893cc --etcd --controlplane

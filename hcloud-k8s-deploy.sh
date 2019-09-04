@@ -5,25 +5,27 @@ set -Eeuo pipefail
 showHelp () { 
     echo "Usage:  ./$(basename $0) --project <name> [OPTIONS]
 
-Simple create a Kubernetes Cluster with Rancher in hetzner-cloud
+Simple create a Kubernetes Cluster with Rancher in Hetzner-Cloud
 
 Mandatory:
-      --project <name>     Your Project Name will be use for hcloud-context and rancher-cluster name
+      --project <name>               Your Project Name will be use for hcloud-context and rancher-cluster name
 
 Options:
-      --enable-ha          Enable K8S-HA Setup
-      --worker <n>         Number of Worker Nodes (default \"1\")
+      --rancher-version <version>    Rancher Version (Image Tag) (default \"latest\")
+      --enable-ha                    Enable K8S-HA Setup
+      --worker <number>              Number of Worker Nodes (default \"1\")
 
-      --home-location      hcloud Datacenter (\"fsn1\"|\"hel1\"|\"nbg1\") (default \"nbg1\")
+      --home-location <data-center>  hcloud Datacenter (\"fsn1\"|\"hel1\"|\"nbg1\") (default \"nbg1\")
 
-      -D, --debug          Enable debug mode
-      -h, --help           Show help for more information"
+      -D, --debug                    Enable debug mode
+      -h, --help                     Show help for more information"
 }
 
 # defaults
 MASTERNUM=1
 WORKERNUM=1
 HOMELOCATION="nbg1"
+RANCHERVERSION="latest"
 
 #
 if [ $# = 0 ]; then
@@ -47,6 +49,11 @@ while [[ $# -gt 0 ]]; do
         --project)
             shift # past argument
             CONTEXT="${1}"
+            shift # past value
+            ;;
+        --rancher-version)
+            shift # past argument
+            RANCHERVERSION="${1}"
             shift # past value
             ;;
         --enable-ha) # do k8s-ha setup
@@ -125,8 +132,10 @@ echo "${FIP} (${DESCRIPTION})"
 RANCHERHOSTNAME="rancher-server"
 echo $'\nDeploy Rancher...'
 
+# inject rancher version
+perl -i -pe"s@rancher:latest@rancher:${RANCHERVERSION}@g" cloud-config/rancher
 # inject floating-ip to cloud-config
-sed -i.orig -e "s@ip addr add.*@ip addr add ${FIP} dev eth0@g" cloud-config/rancher.txt
+perl -i -pe"s@ip addr add.*@ip addr add ${FIP} dev eth0@g" cloud-config/rancher
 
 # create server
 RANCHER=$(
@@ -136,9 +145,9 @@ RANCHER=$(
     --image centos-7 \
     --datacenter "${HOMELOCATION}-dc3" \
     --ssh-key "${USER}" \
-    --user-data-from-file cloud-config/rancher.txt
+    --user-data-from-file cloud-config/rancher
 )
-mv cloud-config/rancher.txt.orig cloud-config/rancher.txt
+
 # assign floating-ip
 hcloud floating-ip assign "${FIPID}" "${RANCHERHOSTNAME}" >/dev/null
 
@@ -201,9 +210,9 @@ rancher context switch 2>/dev/null
 
 # inject cluster connect
 DEPLOYMASTER=$(rancher cluster add-node --etcd --management --controlplane -q "${CONTEXT}" 2>&1 | grep -v "WARN[0000] No context set")
-sed -i.orig -e "s@sudo docker run.*@${DEPLOYMASTER}@g" cloud-config/k8s-master.txt
+perl -i -pe"s@sudo docker run.*@${DEPLOYMASTER}@g" cloud-config/k8s-master
 # inject floating-ip to cloud-config
-sed -i.orig -e "s@ip addr add.*@ip addr add ${FIP} dev eth0@g" cloud-config/k8s-master.txt
+perl -i -pe"s@ip addr add.*@ip addr add ${FIP} dev eth0@g" cloud-config/k8s-master
 
 # create server
 if [ "${MASTERNUM}" = 3 ]; then
@@ -219,12 +228,11 @@ for i in $(seq 1 "${MASTERNUM}"); do
         --image centos-7 \
         --datacenter "${HOMELOCATION}-dc3" \
         --ssh-key "${USER}" \
-        --user-data-from-file cloud-config/k8s-master.txt
+        --user-data-from-file cloud-config/k8s-master
     )
     MASTERIP=$(echo "${MASTER}" | grep IPv4 | cut -d" " -f2)
     echo "k8s-master-0${i} has ${MASTERIP}"
 done
-mv cloud-config/k8s-master.txt.orig cloud-config/k8s-master.txt
 
 ########################################################################
 # create k8s-worker                                                    #
@@ -232,9 +240,9 @@ mv cloud-config/k8s-master.txt.orig cloud-config/k8s-master.txt
 
 # inject cluster connect
 DEPLOYWORKER=$(rancher cluster add-node --worker -q "${CONTEXT}")
-sed -i.orig -e "s@sudo docker run.*@${DEPLOYWORKER}@g" cloud-config/k8s-worker.txt
+perl -i -pe"s@sudo docker run.*@${DEPLOYWORKER}@g" cloud-config/k8s-worker
 # inject floating-ip to cloud-config
-sed -i.orig -e "s@ip addr add.*@ip addr add ${FIP} dev eth0@g" cloud-config/k8s-worker.txt
+perl -i -pe"s@ip addr add.*@ip addr add ${FIP} dev eth0@g" cloud-config/k8s-worker
 
 # create server
 if [ "${WORKERNUM}" = 1 ]; then
@@ -250,17 +258,16 @@ for i in $(seq 1 "${WORKERNUM}"); do
         --image centos-7 \
         --datacenter "${HOMELOCATION}-dc3" \
         --ssh-key "${USER}" \
-        --user-data-from-file cloud-config/k8s-worker.txt
+        --user-data-from-file cloud-config/k8s-worker
     )
     WORKERIP=$(echo "${WORKER}" | grep IPv4 | cut -d" " -f2)
     echo "k8s-worker-0${i} has ${WORKERIP}"
 done
-mv cloud-config/k8s-worker.txt.orig cloud-config/k8s-worker.txt
 
 # assign floating-ip
 echo $'\nAssign Floating-IP to Worker...'
 hcloud floating-ip assign "${FIPID}" k8s-worker-01 >/dev/null
-echo "k8s-worker-01 has ${FIPID} (floating-ip)"
+echo "k8s-worker-01 has ${FIP} (floating-ip)"
 
 # bye bye
 echo $'\nHave fun!'

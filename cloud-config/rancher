@@ -1,0 +1,10 @@
+#cloud-config
+package_update: true
+packages:
+  - docker
+runcmd:
+  - sudo ip addr add 116.203.9.153 dev eth0
+  - systemctl enable docker
+  - systemctl start docker
+  - docker pull rancher/rancher:v2.2.8
+  - docker run -d --restart=unless-stopped -e AUDIT_LEVEL=1 -v /var/log/rancher/auditlog:/var/log/auditlog -v /root/rancher:/var/lib/rancher -p 80:80 -p 443:443 rancher/rancher:v2.2.8
