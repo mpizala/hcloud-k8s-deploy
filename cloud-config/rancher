@@ -3,7 +3,7 @@ package_update: true
 packages:
   - docker
 runcmd:
-  - sudo ip addr add 116.203.9.160 dev eth0
+  - sudo ip addr add x.x.x.x dev eth0
   - systemctl enable docker
   - systemctl start docker
   # pull rancher

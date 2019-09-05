@@ -3,7 +3,7 @@ package_update: true
 packages:
   - docker
 runcmd:
-  - sudo ip addr add 116.203.9.153 dev eth0
+  - sudo ip addr add x.x.x.x dev eth0
   - systemctl enable docker
   - systemctl start docker
-  - sudo docker run -d --privileged --restart=unless-stopped --net=host -v /etc/kubernetes:/etc/kubernetes -v /var/run:/var/run rancher/rancher-agent:v2.2.8 --server https://159.69.105.230 --token xsg6w6w8pn8gxmnzf76462gjrnwff7qzzk9nh9b9kt4fdcz4mdh9mx --ca-checksum db65c5b4a2e81424b46cfd064b815301909f78c9a31a9e8bfd739f5815ca762d --worker
+  - sudo docker run xxx
