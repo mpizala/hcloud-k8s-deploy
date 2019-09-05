@@ -1,18 +1,19 @@
 #!/bin/bash
-set -Eeuo pipefail
+#set -Eeuo pipefail
 
 # help
-showHelp () { 
-    echo "Usage:  ./$(basename $0) --project <name> [OPTIONS]
+showHelp () {
+    echo "Usage:  ./$(basename "$0") --context <name> [OPTIONS]
 
 Simple create a Kubernetes Cluster with Rancher in Hetzner-Cloud
 
 Mandatory:
-      --project <name>               Your Project Name will be use for hcloud-context and rancher-cluster name
+      --context <name>               Your Project Name will be use for hcloud-context and rancher-cluster name
 
 Options:
       --rancher-version <version>    Rancher Version (Image Tag) (default \"latest\")
-      --enable-ha                    Enable K8S-HA Setup
+
+      --master <number>              Number of Master Nodes (\"1\"|\"3\"|\"5\") (default \"1\")
       --worker <number>              Number of Worker Nodes (default \"1\")
 
       --home-location <data-center>  hcloud Datacenter (\"fsn1\"|\"hel1\"|\"nbg1\") (default \"nbg1\")
@@ -21,14 +22,19 @@ Options:
       -h, --help                     Show help for more information"
 }
 
-# defaults
-MASTERNUM=1
-WORKERNUM=1
+# set defaults
+CONTEXT=demo
 HOMELOCATION="nbg1"
+RANCHERNAME="rancher-server"
 RANCHERVERSION="latest"
+MASTERNUM=1
+MASTERNAME=k8s-master-0
+WORKERNUM=1
+WORKERNAME=k8s-worker-0
 
-#
+# check args
 if [ $# = 0 ]; then
+    echo $'1 argument required, 0 provided\n'
     showHelp;
     exit 1
 fi
@@ -46,7 +52,7 @@ while [[ $# -gt 0 ]]; do
             shift # past argument
             set -x
             ;;
-        --project)
+        --context)
             shift # past argument
             CONTEXT="${1}"
             shift # past value
@@ -56,9 +62,10 @@ while [[ $# -gt 0 ]]; do
             RANCHERVERSION="${1}"
             shift # past value
             ;;
-        --enable-ha) # do k8s-ha setup
+        --master) # do k8s-ha setup
             shift # past argument
-            MASTERNUM=3
+            MASTERNUM=$1
+            shift # past argument
         ;;
         --worker)
             shift # past argument
@@ -73,20 +80,30 @@ while [[ $# -gt 0 ]]; do
         --clean)
             # !!! dangerous
             # hidden feature for cleanup your current hcloud context
-            SERVERS=$(hcloud server list | grep -v NAME | awk '{print $2}')
-            while read -r server; do hcloud server delete "${server}"; done < <(echo "$SERVERS")
-            FIPS=$(hcloud floating-ip list | grep -E "^[0-9]" | awk '{print $1}')
-            while read -r fip; do hcloud floating-ip delete "${fip}"; done < <(echo "$FIPS")
-            exit
+            # be sure what you do
+            hcloud context use ${CONTEXT}
+            _clean () {
+                OBJS=$(hcloud "${1}" list | grep -v "^ID" | awk '{print $1}')
+                for obj in ${OBJS}; do
+                    hcloud "$1" delete "${obj}";
+                done
+            }
+            _clean server
+            _clean ssh-key
+            _clean floating-ip
+            _clean volume
+
+            shift # past argument
             ;;
-        *)    # unknown option
-        shift # past argument
-        ;;
+        *) # unknown option
+            echo "unknown option \"${1}\""
+            exit 1
+            shift # past argument
+            ;;
     esac
 done
 
-
-# global stuff
+# execute on target
 _ssh () {
     ssh -o "UserKnownHostsFile=/dev/null" \
         -o "StrictHostKeyChecking=no" \
@@ -94,30 +111,41 @@ _ssh () {
         "${RANCHERIP}" "${@}"
 }
 
+
 ########################################################################
 # init                                                                 #
 ########################################################################
-echo $'Goto https://console.hetzner.cloud/projects'
+echo $'\nGoto https://console.hetzner.cloud/projects'
 echo $'and create 1) a hcloud project and 2) an api-token\n'
-
 
 # create context
 hcloud context delete "${CONTEXT}" >/dev/null 2>&1 || true
 hcloud context create "${CONTEXT}"
 hcloud context use "${CONTEXT}"
 
+# create ssh-keys
+echo $'\nPrepare SSH-Keys...'
+
+# delete ssh-keys
+for key in $(hcloud ssh-key list | grep -v "^ID" | awk '{print $2}'); do
+    hcloud ssh-key delete "${key}" >/dev/null;
+done
 # add ssh-key to context
-MESSAGE=$'\nYour ssh public key (/Users/'"${USER}"$'/.ssh/id_rsa.pub)?:'
-#echo "${MESSAGE}"
-read -r -p "${MESSAGE} " SSHPUBKEYFILE 
-#SSHPUBKEYFILE=/Users/mpizala/.ssh/id_rsa.pub
-#echo "${SSHPUBKEYFILE}"
+for key in $(ls ssh-keys); do
+    hcloud ssh-key create \
+        --name "$(basename ${key} .pub)" \
+        --public-key-from-file "ssh-keys/${key}" >/dev/null || true
+done
+hcloud ssh-key list | grep -v -E "^ID"
 
-hcloud ssh-key create \
-    --name "${USER}" \
-    --public-key-from-file "${SSHPUBKEYFILE}" || true
+# config option for hcloud server create
+ADDKEYS=$(
+    for key in $(ls ssh-keys); do
+        echo --ssh-key $(basename ${key} .pub)
+    done | xargs
+)
 
-# create floating-ip 
+# create floating-ip
 echo $'\nCreate Floating-IP...'
 DESCRIPTION=default
 FIPID=$(hcloud floating-ip create --type ipv4 --home-location "${HOMELOCATION}" --description "${DESCRIPTION}" | cut -d" " -f3)
@@ -129,31 +157,33 @@ echo "${FIP} (${DESCRIPTION})"
 # rancher                                                              #
 ########################################################################
 
-RANCHERHOSTNAME="rancher-server"
 echo $'\nDeploy Rancher...'
 
 # inject rancher version
-perl -i -pe"s@rancher:latest@rancher:${RANCHERVERSION}@g" cloud-config/rancher
+perl -i -pe"s@rancher:[vl].*@rancher:${RANCHERVERSION}@g" cloud-config/rancher
 # inject floating-ip to cloud-config
 perl -i -pe"s@ip addr add.*@ip addr add ${FIP} dev eth0@g" cloud-config/rancher
 
 # create server
 RANCHER=$(
     hcloud server create \
-    --name "${RANCHERHOSTNAME}" \
+    --name "${RANCHERNAME}" \
     --type cx21-ceph \
     --image centos-7 \
     --datacenter "${HOMELOCATION}-dc3" \
-    --ssh-key "${USER}" \
+    ${ADDKEYS} \
     --user-data-from-file cloud-config/rancher
 )
+RANCHERIP=$(echo "${RANCHER}" | grep IPv4 | cut -d" " -f2)
+echo "${RANCHERNAME} has ${RANCHERIP}"
+
+# enable backup
+echo $'\nEnable Backup...'
+hcloud server enable-backup "${RANCHERNAME}" >/dev/null
+echo "Backup enabled for ${RANCHERNAME}"
 
 # assign floating-ip
-hcloud floating-ip assign "${FIPID}" "${RANCHERHOSTNAME}" >/dev/null
-
-# 
-RANCHERIP=$(echo "${RANCHER}" | grep IPv4 | cut -d" " -f2)
-echo "${RANCHERHOSTNAME} has ${RANCHERIP}"
+hcloud floating-ip assign "${FIPID}" "${RANCHERNAME}" >/dev/null
 
 # wait for ssh
 echo $'\nWaiting for SSH is up...'
@@ -169,8 +199,8 @@ echo $'\nWaiting for Rancher is up...'
 #echo $'\nSet Rancher admin password...'
 OK=0
 while [ "$OK" != "1" ]; do
-    RESETPASS="docker exec \$(docker ps -q 2>&1) /usr/bin/reset-password 2>&1 | tail -n1"
-    PASSWORD=$(_ssh "${RESETPASS} 2>/dev/null")
+    RANCHERPW="docker exec \$(docker ps -q 2>&1) /usr/bin/reset-password 2>&1 | tail -n1"
+    PASSWORD=$(_ssh "${RANCHERPW} 2>/dev/null")
     pat="^[a-zA-Z0-9_-]{20}$"
     if [[ "${PASSWORD}" =~ $pat ]]; then
         OK=1
@@ -178,48 +208,53 @@ while [ "$OK" != "1" ]; do
         sleep 5
     fi
 done
-echo 'Rancher is up!'
-echo $'\n'"WebUI: https://${RANCHERIP}/"
-echo 'Username: admin'
-echo "Password: ${PASSWORD}"
+echo $'Rancher is up!'
 
-# add certificate to trust store (darwin)
-echo $'\nAdd certificate to your trust store (login.keychain)'
+# get certificate
 openssl s_client -showcerts -connect "${RANCHERIP}:443" -servername "${RANCHERIP}" </dev/null 2>/dev/null | openssl x509 -outform PEM > "${RANCHERIP}.pem" || true
-/usr/bin/security import "${RANCHERIP}.pem" -k ~/Library/Keychains/login.keychain
-/usr/bin/security add-trusted-cert -r trustAsRoot -k ~/Library/Keychains/login.keychain "${RANCHERIP}.pem"
+
 
 ########################################################################
-# create cluster                                                       #
+# create rancher                                                       #
 ########################################################################
 
 # config rancher-cli
-echo $'\n'"Create an API Key -> https://${RANCHERIP}/apikeys"
-MESSAGE=$'Your API Key (Bearer Token):'
-read -r -s -p "${MESSAGE} " BEARER 
+echo $'\n'"Creating Rancher API Key..."
+# rancher login
+APIKEY=$(
+    curl -i -s -k  -X $'POST' \
+    --data-binary $'{\"username\":\"admin\",\"password\":\"'"${PASSWORD}"$'\",\"description\":\"hcloud-k8s-deploy\",\"responseType\":\"cookie\",\"ttl\":57600000}' \
+    "https://${RANCHERIP}/v3-public/localProviders/local?action=login" | grep Set-Cookie  | awk '{print $2}' | cut -d= -f2 | cut -d";" -f1
+)
+echo "${APIKEY}"
 
-echo $'\n\nLogin to Rancher'
-rancher login "https://${RANCHERIP}/" -t "${BEARER}" 2>/dev/null || true 
+echo $'\nConfigure Rancher CLI...'
+rancher login "https://${RANCHERIP}/" -t "${APIKEY}" --skip-verify
+
 echo $'\nCreate Cluster...'
-rancher cluster create --psp-default-policy restricted "${CONTEXT}" 2>/dev/null
+rancher cluster create \
+    --psp-default-policy restricted \
+    "${CONTEXT}" 2>/dev/null
 rancher context switch 2>/dev/null
+
 
 ########################################################################
 # create k8s-master                                                    #
 ########################################################################
 
-# inject cluster connect
-DEPLOYMASTER=$(rancher cluster add-node --etcd --management --controlplane -q "${CONTEXT}" 2>&1 | grep -v "WARN[0000] No context set")
+# inject cluster join
+DEPLOYMASTER=$(rancher cluster add-node --etcd --controlplane -q "${CONTEXT}" 2>&1 | grep -v "WARN[0000] No context set")
 perl -i -pe"s@sudo docker run.*@${DEPLOYMASTER}@g" cloud-config/k8s-master
 # inject floating-ip to cloud-config
 perl -i -pe"s@ip addr add.*@ip addr add ${FIP} dev eth0@g" cloud-config/k8s-master
 
 # create server
-if [ "${MASTERNUM}" = 3 ]; then
+if [ "${MASTERNUM}" = 3 ] || [ "${MASTERNUM}" = 5 ]; then
     echo $'\nCreate Master Nodes '"(${MASTERNUM}) for HA..."
 else
     echo $'\nCreate Master Node '"(${MASTERNUM})..."
 fi
+
 for i in $(seq 1 "${MASTERNUM}"); do
     MASTER=$(
     hcloud server create \
@@ -227,18 +262,19 @@ for i in $(seq 1 "${MASTERNUM}"); do
         --type cx31-ceph \
         --image centos-7 \
         --datacenter "${HOMELOCATION}-dc3" \
-        --ssh-key "${USER}" \
+        ${ADDKEYS} \
         --user-data-from-file cloud-config/k8s-master
     )
     MASTERIP=$(echo "${MASTER}" | grep IPv4 | cut -d" " -f2)
-    echo "k8s-master-0${i} has ${MASTERIP}"
+    echo "${MASTERNAME}${i} has ${MASTERIP}"
 done
+
 
 ########################################################################
 # create k8s-worker                                                    #
 ########################################################################
 
-# inject cluster connect
+# inject cluster join
 DEPLOYWORKER=$(rancher cluster add-node --worker -q "${CONTEXT}")
 perl -i -pe"s@sudo docker run.*@${DEPLOYWORKER}@g" cloud-config/k8s-worker
 # inject floating-ip to cloud-config
@@ -250,18 +286,19 @@ if [ "${WORKERNUM}" = 1 ]; then
 else
     echo $'\nCreate Worker Nodes '"(${WORKERNUM})..."
 fi
+
 for i in $(seq 1 "${WORKERNUM}"); do
     WORKER=$(
     hcloud server create \
-        --name "k8s-worker-0${i}" \
+        --name "${WORKERNAME}${i}" \
         --type cx31 \
         --image centos-7 \
         --datacenter "${HOMELOCATION}-dc3" \
-        --ssh-key "${USER}" \
+        ${ADDKEYS} \
         --user-data-from-file cloud-config/k8s-worker
     )
     WORKERIP=$(echo "${WORKER}" | grep IPv4 | cut -d" " -f2)
-    echo "k8s-worker-0${i} has ${WORKERIP}"
+    echo "${WORKERNAME}${i} has ${WORKERIP}"
 done
 
 # assign floating-ip
@@ -269,8 +306,74 @@ echo $'\nAssign Floating-IP to Worker...'
 hcloud floating-ip assign "${FIPID}" k8s-worker-01 >/dev/null
 echo "k8s-worker-01 has ${FIP} (floating-ip)"
 
+# import and trust certificate
+echo $'\nAdd Rancher Certificate to login.keychain...'
+/usr/bin/security import "${RANCHERIP}.pem" -k ~/Library/Keychains/login.keychain
+echo $'Set trust for Rancher Certificate. Authorization is required...'
+/usr/bin/security add-trusted-cert -r trustAsRoot -k ~/Library/Keychains/login.keychain "${RANCHERIP}.pem"
+echo $'1 certificate trusted.'
+
 # bye bye
 echo $'\nHave fun!'
 echo $'\n'"WebUI: https://${RANCHERIP}/"
 echo 'Username: admin'
 echo "Password: ${PASSWORD}"
+
+########################################################################
+# kubectl                                                              #
+########################################################################
+
+echo $'\nWaiting for Master is up...'
+# generate kubeconfig
+OK=0
+DONE=0
+while [ "$OK" != '1' ]; do
+    MASTERSTATE=$(rancher nodes list | grep ${MASTERNAME}1 | awk '{print $3}')
+    if [ "${MASTERSTATE}" == "active" ]; then
+        echo "${MASTERNAME}1 is up!"
+        # generate kubeconfigs
+        echo $'Generate Kubeconfig...'
+        CLUSTERID=$(rancher cluster list  | tail -n 1 | awk '{print $2}')
+        curl -s -k -X $'POST' \
+             -H "Cookie: R_SESS=${APIKEY}" \
+             "https://${RANCHERIP}/v3/clusters/${CLUSTERID}?action=generateKubeconfig" | jq .config -r > "kubeconfigs/${CONTEXT}"
+        echo $'\n'"Save \"kubeconfigs/${CONTEXT}\" "
+        OK=1
+    else
+       sleep 5
+    fi
+done
+
+export KUBECONFIG="kubeconfigs/${CONTEXT}"
+
+
+########################################################################
+# Container Storage Interface                                          #
+########################################################################
+
+echo $'Add Container Storage Interface driver for Hetzner Cloud\n'
+
+# add access token
+read -s -r -p "Your hcloud Token: " HCLOUDTOKEN
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hcloud-csi
+  namespace: kube-system
+stringData:
+  token: ${HCLOUDTOKEN}
+EOF
+
+# add hcloud-csi
+kubectl apply -f https://raw.githubusercontent.com/hetznercloud/csi-driver/master/deploy/kubernetes/hcloud-csi.yml
+
+########################################################################
+# Certificate                                                          #
+########################################################################
+
+# create dns
+
+# generate certificate
+
+# create certificate

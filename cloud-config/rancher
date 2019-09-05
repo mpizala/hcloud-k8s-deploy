@@ -3,8 +3,18 @@ package_update: true
 packages:
   - docker
 runcmd:
-  - sudo ip addr add 116.203.9.153 dev eth0
+  - sudo ip addr add 116.203.9.160 dev eth0
   - systemctl enable docker
   - systemctl start docker
-  - docker pull rancher/rancher:v2.2.8
-  - docker run -d --restart=unless-stopped -e AUDIT_LEVEL=1 -v /var/log/rancher/auditlog:/var/log/auditlog -v /root/rancher:/var/lib/rancher -p 80:80 -p 443:443 rancher/rancher:v2.2.8
+  # pull rancher
+  - docker pull rancher/rancher:latest
+  # create rancher-data volume
+  - docker create --name rancher-server rancher/rancher:latest
+  - docker create --volumes-from rancher-server --name rancher-data rancher/rancher:latest
+  - docker rm --force rancher-server
+  # deploy rancher with rancher-data
+  - docker run -d --volumes-from rancher-data --name rancher-server --restart=unless-stopped -e AUDIT_LEVEL=1 -p 80:80 -p 443:443 rancher/rancher:latest
+  # upgrade
+  # - docker rm --force rancher-server
+  # - docker pull rancher/rancher:latest
+  # - docker run -d --volumes-from rancher-data --name rancher-server --restart=unless-stopped -e AUDIT_LEVEL=1 -p 80:80 -p 443:443 rancher/rancher:latest
