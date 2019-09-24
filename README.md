@@ -5,7 +5,7 @@ Simple create a Kubernetes Cluster with Rancher in Hetzner-Cloud
 ## Requirements
 
 ```
-brew install hcloud rancher-cli jq
+brew install hcloud rancher-cli kubectl jq
 ```
 
 ## How to use
