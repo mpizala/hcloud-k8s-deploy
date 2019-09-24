@@ -12,9 +12,13 @@ Mandatory:
 
 Options:
       --rancher-version <version>    Rancher Version (Image Tag) (default \"latest\")
+      --rancher-type <type>          Type of Rancher Node (default \"cx21-ceph\")
 
       --master <number>              Number of Master Nodes (\"1\"|\"3\"|\"5\") (default \"1\")
+      --master-type <type>           Type of Master Nodes (default \"cx31-ceph\")
+
       --worker <number>              Number of Worker Nodes (default \"1\")
+      --worker-type <type>           Type of Worker Nodes (default \"cx31\")
 
       --home-location <data-center>  hcloud Datacenter (\"fsn1\"|\"hel1\"|\"nbg1\") (default \"nbg1\")
 
@@ -25,12 +29,18 @@ Options:
 # set defaults
 CONTEXT=demo
 HOMELOCATION="nbg1"
+
 RANCHERNAME="rancher-server"
 RANCHERVERSION="latest"
+RANCHERTYPE="cx21-ceph"
+
 MASTERNUM=1
 MASTERNAME=k8s-master-0
+MASTERTYPE=cx31-ceph
+
 WORKERNUM=1
 WORKERNAME=k8s-worker-0
+WORKERTYPE=cx31
 
 # check args
 if [ $# = 0 ]; then
@@ -62,9 +72,19 @@ while [[ $# -gt 0 ]]; do
             RANCHERVERSION="${1}"
             shift # past value
             ;;
+        --rancher-size)
+            shift # past argument
+            RANCHERTYPE=$1
+            shift # past argument
+        ;;
         --master) # do k8s-ha setup
             shift # past argument
             MASTERNUM=$1
+            shift # past argument
+        ;;
+        --master-size)
+            shift # past argument
+            MASTERTYPE=$1
             shift # past argument
         ;;
         --worker)
@@ -72,6 +92,11 @@ while [[ $# -gt 0 ]]; do
             WORKERNUM=$1
             shift # past argument
             ;;
+        --worker-size)
+            shift # past argument
+            WORKERTYPE=$1
+            shift # past argument
+        ;;
         --home-location)
             shift # past argument
             HOMELOCATION=$1
@@ -168,7 +193,7 @@ perl -i -pe"s@ip addr add.*@ip addr add ${FIP} dev eth0@g" cloud-config/rancher
 RANCHER=$(
     hcloud server create \
     --name "${RANCHERNAME}" \
-    --type cx21-ceph \
+    --type "${RANCHERSIZE}" \
     --image centos-7 \
     --datacenter "${HOMELOCATION}-dc3" \
     ${ADDKEYS} \
