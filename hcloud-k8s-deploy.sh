@@ -72,7 +72,7 @@ while [[ $# -gt 0 ]]; do
             RANCHERVERSION="${1}"
             shift # past value
             ;;
-        --rancher-size)
+        --rancher-type)
             shift # past argument
             RANCHERTYPE=$1
             shift # past argument
@@ -82,7 +82,7 @@ while [[ $# -gt 0 ]]; do
             MASTERNUM=$1
             shift # past argument
         ;;
-        --master-size)
+        --master-type)
             shift # past argument
             MASTERTYPE=$1
             shift # past argument
@@ -92,7 +92,7 @@ while [[ $# -gt 0 ]]; do
             WORKERNUM=$1
             shift # past argument
             ;;
-        --worker-size)
+        --worker-type)
             shift # past argument
             WORKERTYPE=$1
             shift # past argument
