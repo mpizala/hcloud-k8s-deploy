@@ -193,7 +193,7 @@ perl -i -pe"s@ip addr add.*@ip addr add ${FIP} dev eth0@g" cloud-config/rancher
 RANCHER=$(
     hcloud server create \
     --name "${RANCHERNAME}" \
-    --type "${RANCHERSIZE}" \
+    --type "${RANCHERTYPE}" \
     --image centos-7 \
     --datacenter "${HOMELOCATION}-dc3" \
     ${ADDKEYS} \
@@ -284,7 +284,7 @@ for i in $(seq 1 "${MASTERNUM}"); do
     MASTER=$(
     hcloud server create \
         --name "k8s-master-0$i" \
-        --type cx31-ceph \
+        --type "${MASTERTYPE}" \
         --image centos-7 \
         --datacenter "${HOMELOCATION}-dc3" \
         ${ADDKEYS} \
@@ -316,7 +316,7 @@ for i in $(seq 1 "${WORKERNUM}"); do
     WORKER=$(
     hcloud server create \
         --name "${WORKERNAME}${i}" \
-        --type cx31 \
+        --type "${WORKERTYPE}" \
         --image centos-7 \
         --datacenter "${HOMELOCATION}-dc3" \
         ${ADDKEYS} \
